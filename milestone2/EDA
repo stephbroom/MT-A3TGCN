@@ -1,0 +1,128 @@
+# visualise_tx_graph.py
+
+import pandas as pd
+import networkx as nx
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load transaction classes
+classes = pd.read_csv('data/txs_classes.csv')
+classes.columns = ['txId', 'class']
+
+# Summary of transaction class distribution
+print("Transaction class distribution:")
+print(classes['class'].value_counts())
+
+# Load directed transaction edges
+edges = pd.read_csv('data/txs_edgelist.csv')
+edges.columns = ['txId1', 'txId2']
+G = nx.from_pandas_edgelist(edges, source='txId1', target='txId2', create_using=nx.DiGraph)
+
+#print(f"\nTotal transactions (nodes): {G.number_of_nodes()}")
+#print(f"Total transaction links (edges): {G.number_of_edges()}")
+
+# Compute in-degrees and out-degrees
+in_degrees = dict(G.in_degree())
+out_degrees = dict(G.out_degree())
+classes['in_degree'] = classes['txId'].map(in_degrees).fillna(0).astype(int)
+classes['out_degree'] = classes['txId'].map(out_degrees).fillna(0).astype(int)
+
+#print("\nDegree summary statistics by class:")
+#print(classes.groupby('class')[['in_degree','out_degree']].describe())
+
+# Construct full transaction graph
+G_tx = nx.from_pandas_edgelist(edges, source='txId1', target='txId2', create_using=nx.DiGraph())
+
+# Load address-transaction edges
+addr_tx_edges = pd.read_csv('data/AddrTx_edgelist.csv')
+addr_tx_edges.columns = ['walletId', 'txId']
+G_addr_tx = nx.from_pandas_edgelist(addr_tx_edges, source='walletId', target='txId', create_using=nx.DiGraph())
+
+# Load address-address edges
+addr_addr_edges = pd.read_csv('data/AddrAddr_edgelist.csv')
+addr_addr_edges.columns = ['walletId1', 'walletId2']
+G_addr = nx.from_pandas_edgelist(addr_addr_edges, source='walletId1', target='walletId2', create_using=nx.DiGraph())
+
+# Load and merge transaction features
+features = pd.read_csv('data/txs_features.csv')
+features.columns = ['txId', 'timestamp'] + [f'feature_{i}' for i in range(2, features.shape[1])]
+data = pd.merge(features, classes[['txId', 'class']], on='txId', how='left')
+data['in_degree'] = data['txId'].map(in_degrees).fillna(0).astype(int)
+data['out_degree'] = data['txId'].map(out_degrees).fillna(0).astype(int)
+#print(data[['in_degree', 'out_degree']].describe())
+#print(data[['in_degree', 'out_degree']].head(10))
+
+fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+# 1) Overall in-degree
+sns.histplot(
+    data=data[data['in_degree'] > 0],
+    x='in_degree', bins=50, ax=axes[0, 0]
+)
+axes[0, 0].set(
+    title='Transaction In-Degree Distribution',
+    xlabel='In-Degree',
+    ylabel='Count (log scale)'
+)
+axes[0, 0].set_yscale('log')
+
+# 2) Overall out-degree
+sns.histplot(
+    data=data[data['out_degree'] > 0],
+    x='out_degree', bins=50, ax=axes[0, 1]
+)
+axes[0, 1].set(
+    title='Transaction Out-Degree Distribution',
+    xlabel='Out-Degree',
+    ylabel='Count (log scale)'
+)
+axes[0, 1].set_yscale('log')
+
+# 3) In-degree (Illicit)
+sns.histplot(
+    data=data[(data['class']==1) & (data['in_degree']>0)],
+    x='in_degree', bins=50, ax=axes[1, 0]
+)
+axes[1, 0].set(
+    title='In-Degree Distribution (Class 1 – Illicit)',
+    xlabel='In-Degree',
+    ylabel='Count (log scale)'
+)
+axes[1, 0].set_yscale('log')
+
+# 4) In-degree (Licit)
+sns.histplot(
+    data=data[(data['class']==2) & (data['in_degree']>0)],
+    x='in_degree', bins=50, ax=axes[1, 1]
+)
+axes[1, 1].set(
+    title='In-Degree Distribution (Class 2 – Licit)',
+    xlabel='In-Degree',
+    ylabel='Count (log scale)'
+)
+axes[1, 1].set_yscale('log')
+
+plt.tight_layout()
+plt.show()
+
+#filter and visualize a subgraph at a specific time step
+time_step = 10
+tx_ids_time_step = data[data['timestamp'] == time_step]['txId'].tolist()
+edges_time_step = edges[edges['txId1'].isin(tx_ids_time_step) & edges['txId2'].isin(tx_ids_time_step)]
+G_time_step = nx.from_pandas_edgelist(edges_time_step, source='txId1', target='txId2', create_using=nx.DiGraph())
+
+class_map = dict(zip(data['txId'], data['class']))
+node_classes = [class_map.get(node, 'unknown') for node in G_time_step.nodes()]
+unique_classes = sorted(set(node_classes))
+color_map = dict(zip(unique_classes, plt.cm.tab10.colors[:len(unique_classes)]))
+node_colors = [color_map[cls] for cls in node_classes]
+
+#visualize the time step graph
+plt.figure(figsize=(6, 4))
+pos = nx.spring_layout(G_time_step, k=0.15)
+nx.draw(G_time_step, pos, node_color=node_colors, with_labels=False, edge_color='gray', node_size=5, width=0.1)
+plt.title(f'Transaction Graph at Time Step {time_step}')
+plt.tight_layout()
+plt.show()
+
+
